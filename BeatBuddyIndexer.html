@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BeatBuddy Project CSV Creator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f4f4f9;
+            color: #333;
+            text-align: center;
+        }
+        .card {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            font-size: 1.5rem;
+            color: #2c3e50;
+            margin-bottom: 15px;
+        }
+        p {
+            font-size: 1rem;
+            color: #555;
+            margin-bottom: 20px;
+            line-height: 1.4;
+        }
+        select, button {
+            font-size: 1rem;
+            padding: 10px 20px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border: 1px solid #ccc;
+            cursor: pointer;
+        }
+        select {
+            background: #fff;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            font-weight: bold;
+            transition: background 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #log {
+            margin-top: 20px;
+            text-align: left;
+            background: #1e1e1e;
+            color: #00ff66;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 0.85rem;
+            height: 150px;
+            overflow-y: auto;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>BeatBuddy Project CSV Creator</h1>
+    <p>This tool creates a CSV file from your BeatBuddy root folder, listing info about your project songs and drum kits[cite: 1].</p>
+    
+    <div>
+        <label for="midiChannel"><strong>Select your BeatBuddy MIDI channel:</strong></label><br>
+        <select id="midiChannel">
+            <option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option>
+            <option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option>
+            <option value="9">9</option><option value="10">10</option><option value="11">11</option><option value="12">12</option>
+            <option value="13">13</option><option value="14">14</option><option value="15">15</option><option value="16">16</option>
+        </select>
+    </div>
+
+    <p style="margin-top: 15px;">Click the button below to select your BeatBuddy root folder (containing <strong>SONGS</strong> and <strong>DRUMSETS</strong>)[cite: 1].</p>
+    <button id="selectFolderBtn">Open SD Card Folder</button>
+
+    <div id="log"></div>
+</div>
+
+<script>
+    function logMessage(msg) {
+        const logDiv = document.getElementById('log');
+        logDiv.style.display = 'block';
+        logDiv.innerHTML += msg + '<br>';
+        logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    document.getElementById('selectFolderBtn').addEventListener('click', async () => {
+        // Check if browser supports folder picking
+        if (!window.showDirectoryPicker) {
+            alert("Your browser doesn't support the File System Access API. Please use Google Chrome, Edge, or Opera.");
+            return;
+        }
+
+        try {
+            // Clear previous logs
+            document.getElementById('log').innerHTML = '';
+            
+            const channelVal = parseInt(document.getElementById('midiChannel').value);
+            const midiCode = (channelVal - 1).toString(16).toUpperCase();
+            
+            logMessage(`MidiChannel: ${channelVal} (Hex: ${midiCode})`);
+            logMessage("Requesting folder access...");
+
+            // Prompt user for root SD card folder
+            const rootDirHandle = await window.showDirectoryPicker();
+            
+            let foldernames = [];
+            let foldercodes = [];
+            let foldernumbers = [];
+            let newcsventries = [];
+            let drumkits = [];
+
+            // 1. Read SONGS/config.csv
+            logMessage("GETTING FOLDERS...");
+            const songsDirHandle = await rootDirHandle.getDirectoryHandle('SONGS', { create: false });
+            const folderConfigHandle = await songsDirHandle.getFileHandle('config.csv', { create: false });
+            const folderConfigFile = await folderConfigHandle.getFile();
+            const folderConfigText = await folderConfigFile.text();
+            
+            const folderPairs = folderConfigText.split(/\r?\n/).filter(line => line.trim() !== '');
+            
+            for (const folderPair of folderPairs) {
+                // Split like: 165DA150,1. Blues
+                const firstComma = folderPair.indexOf(',');
+                if (firstComma === -1) continue;
+                const foldercode = folderPair.substring(0, firstComma).trim();
+                const rest = folderPair.substring(firstComma + 1).trim();
+
+                const dotIndex = rest.indexOf('. ');
+                if (dotIndex === -1) continue;
+                const foldernumber = rest.substring(0, dotIndex).trim();
+                const foldername = rest.substring(dotIndex + 2).trim();
+
+                foldercodes.push(foldercode);
+                foldernumbers.push(foldernumber);
+                foldernames.push(foldername);
+                logMessage(`foldercode:${foldercode}  name:${foldername}`);
+            }
+
+            // Header for CSV entries
+            newcsventries.push('"SONG_CODE","SONG_NUM","SONG_NAME","FOLDER_CODE","FOLDER_NUM","FOLDER_NAME","MIDI_CODE"\n');
+
+            // 2. Iterate through each folder config file
+            for (let x = 0; x < foldercodes.length; x++) {
+                const foldercode = foldercodes[x];
+                logMessage(`<br>Getting songs from SONGS/${foldercode}/CONFIG.CSV (Folder: ${foldernumbers[x]}. ${foldernames[x]})`);
+                
+                try {
+                    const subFolderHandle = await songsDirHandle.getDirectoryHandle(foldercode, { create: false });
+                    // Handle lowercase or uppercase config filename variations safely
+                    let songConfigHandle;
+                    try {
+                        songConfigHandle = await subFolderHandle.getFileHandle('CONFIG.CSV', { create: false });
+                    } catch {
+                        songConfigHandle = await subFolderHandle.getFileHandle('config.csv', { create: false });
+                    }
+                    
+                    const songConfigFile = await songConfigHandle.getFile();
+                    const songConfigText = await songConfigFile.text();
+                    const songs = songConfigText.split(/\r?\n/).filter(line => line.trim() !== '');
+
+                    for (const song of songs) {
+                        const firstComma = song.indexOf(',');
+                        if (firstComma === -1) continue;
+                        const songcode = song.substring(0, firstComma).trim();
+                        const songRest = song.substring(firstComma + 1).trim();
+
+                        const dotIndex = songRest.indexOf('. ');
+                        if (dotIndex === -1) continue;
+                        const songnum = songRest.substring(0, dotIndex).trim();
+                        const songname = songRest.substring(dotIndex + 2).trim();
+
+                        // Compute MIDI Hex codes
+                        const fNum = parseInt(foldernumbers[x]);
+                        const sNum = parseInt(songnum);
+
+                        const msb = Math.floor((fNum - 1) / 128);
+                        const lsb = (fNum - 1) % 128;
+
+                        const msbHex = `0xB${midiCode} 0x00 0x` + msb.toString(16).toUpperCase().padStart(2, '0');
+                        const lsbHex = `0xB${midiCode} 0x20 0x` + lsb.toString(16).toUpperCase().padStart(2, '0');
+                        const songHex = `0xC${midiCode} 0x` + (sNum - 1).toString(16).toUpperCase().padStart(2, '0');
+                        const hexCode = `${msbHex}\n${lsbHex}\n${songHex}`;
+
+                        const songentry = `"${songcode}","${songnum}","${songname}","${foldercodes[x]}","${foldernumbers[x]}","${foldernames[x]}","${hexCode}"\n`;
+                        newcsventries.push(songentry);
+                    }
+                } catch (err) {
+                    logMessage(`Warning: Could not read folder ${foldercode}: ${err.message}`);
+                }
+            }
+
+            // 3. Read DRUMSETS/config.csv
+            logMessage("<br>GETTING DRUMKITS...");
+            drumkits.push('"___DRUMKITS___"\n"KIT_CODE","KIT_NUM","KIT_NAME","MIDI_CODE"\n');
+
+            try {
+                const drumSetsDirHandle = await rootDirHandle.getDirectoryHandle('DRUMSETS', { create: false });
+                let drumConfigHandle;
+                try {
+                    drumConfigHandle = await drumSetsDirHandle.getFileHandle('config.csv', { create: false });
+                } catch {
+                    drumConfigHandle = await drumSetsDirHandle.getFileHandle('CONFIG.CSV', { create: false });
+                }
+
+                const drumConfigFile = await drumConfigHandle.getFile();
+                const drumConfigText = await drumConfigFile.text();
+                const drums = drumConfigText.split(/\r?\n/).filter(line => line.trim() !== '');
+
+                for (const drum of drums) {
+                    const firstComma = drum.indexOf(',');
+                    if (firstComma === -1) continue;
+                    const kitCode = drum.substring(0, firstComma).trim();
+                    const drumRest = drum.substring(firstComma + 1).trim();
+
+                    const dotIndex = drumRest.indexOf('. ');
+                    if (dotIndex === -1) continue;
+                    const kitNum = drumRest.substring(0, dotIndex).trim();
+                    const kitName = drumRest.substring(dotIndex + 2).trim();
+
+                    const kitHex = `0xB${midiCode} 0x74 0x` + (parseInt(kitNum) - 1).toString(16).toUpperCase().padStart(2, '0');
+                    drumkits.push(`"${kitCode}","${kitNum}","${kitName}","${kitHex}"\n`);
+                }
+            } catch (err) {
+                logMessage(`Warning: Could not read DRUMSETS folder: ${err.message}`);
+            }
+
+            // 4. Combine and Write MyBeatBuddyProject.csv back to SD card root
+            logMessage("<br>Ready to create combined csv file...");
+            
+            const fileBlobData = [...newcsventries, ...drumkits];
+            const fileContent = new Blob(fileBlobData, { type: 'text/csv;charset=utf-8;' });
+
+            try {
+                // Try writing directly back to the selected folder directory handle
+                const newFileHandle = await rootDirHandle.getFileHandle('MyBeatBuddyProject.csv', { create: true });
+                const writableStream = await newFileHandle.createWritable();
+                await writableStream.write(fileContent);
+                await writableStream.close();
+                logMessage("Complete! MyBeatBuddyProject.csv successfully written directly to your SD card root folder.");
+                alert("Success!\n\nMyBeatBuddyProject.csv file created directly inside your SD card folder.");
+            } catch (writeErr) {
+                // Fallback if direct write permissions are restricted on the handle
+                logMessage("Direct write blocked or failed. Triggering browser download instead...");
+                const downloadUrl = URL.createObjectURL(fileContent);
+                const downloadLink = document.createElement('a');
+                downloadLink.href = downloadUrl;
+                downloadLink.download = 'MyBeatBuddyProject.csv';
+                document.body.appendChild(downloadLink);
+                downloadLink.click();
+                document.body.removeChild(downloadLink);
+                logMessage("Complete! MyBeatBuddyProject.csv downloaded via your browser.");
+                alert("Success!\n\nMyBeatBuddyProject.csv file has been downloaded to your computer/device.");
+            }
+
+        } catch (err) {
+            console.error(err);
+            logMessage(`Error: ${err.message}`);
+            alert("Error: " + err.message);
+        }
+    });
+</script>
+
+</body>
+</html>
