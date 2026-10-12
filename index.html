@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BeatBuddy Project CSV Creator</title>
+    <title>BeatBuddy & BB2 Project CSV Creator</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -61,7 +61,7 @@
             border-radius: 6px;
             font-family: monospace;
             font-size: 0.85rem;
-            height: 150px;
+            height: 180px;
             overflow-y: auto;
             display: none;
         }
@@ -70,8 +70,8 @@
 <body>
 
 <div class="card">
-    <h1>BeatBuddy Project CSV Creator</h1>
-    <p>This tool creates a CSV file from your BeatBuddy root folder, listing info about your project songs and drum kits[cite: 1].</p>
+    <h1>BeatBuddy & BB2 Project CSV Creator</h1>
+    <p>This tool creates a CSV file from your BeatBuddy or BeatBuddy 2 root folder, supporting standard songs, HD drum sets, and loose drums.</p>
     
     <div>
         <label for="midiChannel"><strong>Select your BeatBuddy MIDI channel:</strong></label><br>
@@ -83,7 +83,7 @@
         </select>
     </div>
 
-    <p style="margin-top: 15px;">Click the button below to select your BeatBuddy root folder (containing <strong>SONGS</strong> and <strong>DRUMSETS</strong>)[cite: 1].</p>
+    <p style="margin-top: 15px;">Click the button below to select your BeatBuddy root folder (containing <strong>SONGS</strong> and <strong>DRUMSETS</strong>)</p>
     <button id="selectFolderBtn">Open SD Card Folder</button>
 
     <div id="log"></div>
@@ -97,15 +97,27 @@
         logDiv.scrollTop = logDiv.scrollHeight;
     }
 
+    // Helper to try reading a file with alternative names (case-insensitive & BB2 variations)
+    async function getConfigFileContent(dirHandle, possibleNames) {
+        for (const name of possibleNames) {
+            try {
+                const fileHandle = await dirHandle.getFileHandle(name, { create: false });
+                const file = await fileHandle.getFile();
+                return await file.text();
+            } catch (e) {
+                // Try next variant
+            }
+        }
+        return null;
+    }
+
     document.getElementById('selectFolderBtn').addEventListener('click', async () => {
-        // Check if browser supports folder picking
         if (!window.showDirectoryPicker) {
             alert("Your browser doesn't support the File System Access API. Please use Google Chrome, Edge, or Opera.");
             return;
         }
 
         try {
-            // Clear previous logs
             document.getElementById('log').innerHTML = '';
             
             const channelVal = parseInt(document.getElementById('midiChannel').value);
@@ -114,7 +126,6 @@
             logMessage(`MidiChannel: ${channelVal} (Hex: ${midiCode})`);
             logMessage("Requesting folder access...");
 
-            // Prompt user for root SD card folder
             const rootDirHandle = await window.showDirectoryPicker();
             
             let foldernames = [];
@@ -126,14 +137,15 @@
             // 1. Read SONGS/config.csv
             logMessage("GETTING FOLDERS...");
             const songsDirHandle = await rootDirHandle.getDirectoryHandle('SONGS', { create: false });
-            const folderConfigHandle = await songsDirHandle.getFileHandle('config.csv', { create: false });
-            const folderConfigFile = await folderConfigHandle.getFile();
-            const folderConfigText = await folderConfigFile.text();
+            const folderConfigText = await getConfigFileContent(songsDirHandle, ['config.csv', 'CONFIG.CSV']);
+            
+            if (!folderConfigText) {
+                throw new Error("Could not find SONGS/config.csv");
+            }
             
             const folderPairs = folderConfigText.split(/\r?\n/).filter(line => line.trim() !== '');
             
             for (const folderPair of folderPairs) {
-                // Split like: 165DA150,1. Blues
                 const firstComma = folderPair.indexOf(',');
                 if (firstComma === -1) continue;
                 const foldercode = folderPair.substring(0, firstComma).trim();
@@ -150,7 +162,6 @@
                 logMessage(`foldercode:${foldercode}  name:${foldername}`);
             }
 
-            // Header for CSV entries
             newcsventries.push('"SONG_CODE","SONG_NUM","SONG_NAME","FOLDER_CODE","FOLDER_NUM","FOLDER_NAME","MIDI_CODE"\n');
 
             // 2. Iterate through each folder config file
@@ -160,92 +171,118 @@
                 
                 try {
                     const subFolderHandle = await songsDirHandle.getDirectoryHandle(foldercode, { create: false });
-                    // Handle lowercase or uppercase config filename variations safely
-                    let songConfigHandle;
-                    try {
-                        songConfigHandle = await subFolderHandle.getFileHandle('CONFIG.CSV', { create: false });
-                    } catch {
-                        songConfigHandle = await subFolderHandle.getFileHandle('config.csv', { create: false });
-                    }
+                    const songConfigText = await getConfigFileContent(subFolderHandle, ['CONFIG.CSV', 'config.csv']);
                     
-                    const songConfigFile = await songConfigHandle.getFile();
-                    const songConfigText = await songConfigFile.text();
-                    const songs = songConfigText.split(/\r?\n/).filter(line => line.trim() !== '');
+                    if (songConfigText) {
+                        const songs = songConfigText.split(/\r?\n/).filter(line => line.trim() !== '');
 
-                    for (const song of songs) {
-                        const firstComma = song.indexOf(',');
-                        if (firstComma === -1) continue;
-                        const songcode = song.substring(0, firstComma).trim();
-                        const songRest = song.substring(firstComma + 1).trim();
+                        for (const song of songs) {
+                            const firstComma = song.indexOf(',');
+                            if (firstComma === -1) continue;
+                            const songcode = song.substring(0, firstComma).trim();
+                            const songRest = song.substring(firstComma + 1).trim();
 
-                        const dotIndex = songRest.indexOf('. ');
-                        if (dotIndex === -1) continue;
-                        const songnum = songRest.substring(0, dotIndex).trim();
-                        const songname = songRest.substring(dotIndex + 2).trim();
+                            const dotIndex = songRest.indexOf('. ');
+                            if (dotIndex === -1) continue;
+                            const songnum = songRest.substring(0, dotIndex).trim();
+                            const songname = songRest.substring(dotIndex + 2).trim();
 
-                        // Compute MIDI Hex codes
-                        const fNum = parseInt(foldernumbers[x]);
-                        const sNum = parseInt(songnum);
+                            const fNum = parseInt(foldernumbers[x]);
+                            const sNum = parseInt(songnum);
 
-                        const msb = Math.floor((fNum - 1) / 128);
-                        const lsb = (fNum - 1) % 128;
+                            const msb = Math.floor((fNum - 1) / 128);
+                            const lsb = (fNum - 1) % 128;
 
-                        const msbHex = `0xB${midiCode} 0x00 0x` + msb.toString(16).toUpperCase().padStart(2, '0');
-                        const lsbHex = `0xB${midiCode} 0x20 0x` + lsb.toString(16).toUpperCase().padStart(2, '0');
-                        const songHex = `0xC${midiCode} 0x` + (sNum - 1).toString(16).toUpperCase().padStart(2, '0');
-                        const hexCode = `${msbHex}\n${lsbHex}\n${songHex}`;
+                            const msbHex = `0xB${midiCode} 0x00 0x` + msb.toString(16).toUpperCase().padStart(2, '0');
+                            const lsbHex = `0xB${midiCode} 0x20 0x` + lsb.toString(16).toUpperCase().padStart(2, '0');
+                            const songHex = `0xC${midiCode} 0x` + (sNum - 1).toString(16).toUpperCase().padStart(2, '0');
+                            const hexCode = `${msbHex}\n${lsbHex}\n${songHex}`;
 
-                        const songentry = `"${songcode}","${songnum}","${songname}","${foldercodes[x]}","${foldernumbers[x]}","${foldernames[x]}","${hexCode}"\n`;
-                        newcsventries.push(songentry);
+                            const songentry = `"${songcode}","${songnum}","${songname}","${foldercodes[x]}","${foldernumbers[x]}","${foldernames[x]}","${hexCode}"\n`;
+                            newcsventries.push(songentry);
+                        }
                     }
                 } catch (err) {
                     logMessage(`Warning: Could not read folder ${foldercode}: ${err.message}`);
                 }
             }
 
-            // 3. Read DRUMSETS/config.csv
+            // 3. Read Drum Kits (Supporting BB1 DRUMSETS, BB2 DRUMSETSHD, and LOOSEDRUMS)
             logMessage("<br>GETTING DRUMKITS...");
-            drumkits.push('"___DRUMKITS___"\n"KIT_CODE","KIT_NUM","KIT_NAME","MIDI_CODE"\n');
+            
+            let combinedDrumText = "";
+            let drumSetsDirHandle = null;
 
             try {
-                const drumSetsDirHandle = await rootDirHandle.getDirectoryHandle('DRUMSETS', { create: false });
-                let drumConfigHandle;
-                try {
-                    drumConfigHandle = await drumSetsDirHandle.getFileHandle('config.csv', { create: false });
-                } catch {
-                    drumConfigHandle = await drumSetsDirHandle.getFileHandle('CONFIG.CSV', { create: false });
-                }
-
-                const drumConfigFile = await drumConfigHandle.getFile();
-                const drumConfigText = await drumConfigFile.text();
-                const drums = drumConfigText.split(/\r?\n/).filter(line => line.trim() !== '');
-
-                for (const drum of drums) {
-                    const firstComma = drum.indexOf(',');
-                    if (firstComma === -1) continue;
-                    const kitCode = drum.substring(0, firstComma).trim();
-                    const drumRest = drum.substring(firstComma + 1).trim();
-
-                    const dotIndex = drumRest.indexOf('. ');
-                    if (dotIndex === -1) continue;
-                    const kitNum = drumRest.substring(0, dotIndex).trim();
-                    const kitName = drumRest.substring(dotIndex + 2).trim();
-
-                    const kitHex = `0xB${midiCode} 0x74 0x` + (parseInt(kitNum) - 1).toString(16).toUpperCase().padStart(2, '0');
-                    drumkits.push(`"${kitCode}","${kitNum}","${kitName}","${kitHex}"\n`);
-                }
-            } catch (err) {
-                logMessage(`Warning: Could not read DRUMSETS folder: ${err.message}`);
+                drumSetsDirHandle = await rootDirHandle.getDirectoryHandle('DRUMSETS', { create: false });
+            } catch (e) {
+                // DRUMSETS folder might be named differently or optional
             }
 
-            // 4. Combine and Write MyBeatBuddyProject.csv back to SD card root
+            if (drumSetsDirHandle) {
+                const standardDrums = await getConfigFileContent(drumSetsDirHandle, ['config.csv', 'CONFIG.CSV']);
+                if (standardDrums) combinedDrumText += standardDrums + "\n";
+
+                // Check for BB2 HD kits (drmxconfig.csv)
+                const hdDrums = await getConfigFileContent(drumSetsDirHandle, ['drmxconfig.csv', 'DRMXCONFIG.CSV']);
+                if (hdDrums) {
+                    logMessage("Found HD Drum Sets (DRUMSETSHD/drmxconfig.csv)");
+                    combinedDrumText += "\n" + hdDrums;
+                }
+
+                // Check for loose drums
+                const looseDrums = await getConfigFileContent(drumSetsDirHandle, ['loose_drums.csv', 'LOOSE_DRUMS.CSV']);
+                if (looseDrums) {
+                    logMessage("Found Loose Drums (LOOSEDRUMS)");
+                    combinedDrumText = looseDrums; // Override with loose drums if present matching Java logic
+                }
+            }
+
+            drumkits.push('"___DRUMKITS___"\n"KIT_CODE","KIT_NUM","KIT_NAME","MIDI_CODE"\n');
+
+            if (combinedDrumText.trim() !== "") {
+                const kits = combinedDrumText.split(/\r?\n/).filter(line => line.trim() !== '');
+                let rollingKitNum = 1;
+                let processedKitCodes = new Set();
+
+                for (const kit of kits) {
+                    const firstComma = kit.indexOf(',');
+                    if (firstComma === -1) continue;
+                    const kitCode = kit.substring(0, firstComma).trim();
+                    const drumRest = kit.substring(firstComma + 1).trim();
+
+                    const dotIndex = drumRest.indexOf('. ');
+                    if (dotIndex !== -1) {
+                        const kitNumStr = drumRest.substring(0, dotIndex).trim();
+                        let kitNum = parseInt(kitNumStr.replace(/\D/g, '')) || rollingKitNum;
+                        const kitName = drumRest.substring(dotIndex + 2).trim();
+
+                        if (kitCode.toLowerCase().includes('.drmx')) {
+                            kitNum = rollingKitNum;
+                        }
+
+                        const kitHex = `0xB${midiCode} 0x74 0x` + (kitNum - 1).toString(16).toUpperCase().padStart(2, '0');
+                        drumkits.push(`"${kitCode}","${kitNum}","${kitName}","${kitHex}"\n`);
+                        processedKitCodes.add(kitCode);
+                    } else if (!processedKitCodes.has(kitCode)) {
+                        // Fallback handling for lines without standard dot indexing
+                        const kitNum = rollingKitNum;
+                        const kitName = drumRest;
+                        const kitHex = `0xB${midiCode} 0x74 0x` + (kitNum - 1).toString(16).toUpperCase().padStart(2, '0');
+                        drumkits.push(`"${kitCode}","${kitNum}","${kitName}","${kitHex}"\n`);
+                        processedKitCodes.add(kitCode);
+                    }
+                    rollingKitNum++;
+                }
+            }
+
+            // 4. Combine and Write MyBeatBuddyProject.csv
             logMessage("<br>Ready to create combined csv file...");
             
             const fileBlobData = [...newcsventries, ...drumkits];
             const fileContent = new Blob(fileBlobData, { type: 'text/csv;charset=utf-8;' });
 
             try {
-                // Try writing directly back to the selected folder directory handle
                 const newFileHandle = await rootDirHandle.getFileHandle('MyBeatBuddyProject.csv', { create: true });
                 const writableStream = await newFileHandle.createWritable();
                 await writableStream.write(fileContent);
@@ -253,7 +290,6 @@
                 logMessage("Complete! MyBeatBuddyProject.csv successfully written directly to your SD card root folder.");
                 alert("Success!\n\nMyBeatBuddyProject.csv file created directly inside your SD card folder.");
             } catch (writeErr) {
-                // Fallback if direct write permissions are restricted on the handle
                 logMessage("Direct write blocked or failed. Triggering browser download instead...");
                 const downloadUrl = URL.createObjectURL(fileContent);
                 const downloadLink = document.createElement('a');
